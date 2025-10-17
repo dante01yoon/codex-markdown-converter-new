@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import html
 import json
 import logging
@@ -228,6 +229,9 @@ class ConverterConfig:
     container_class: str = "markdown-body"
     embed_css: bool = True
     css_text: Optional[str] = None
+    enable_math: bool = False
+    math_extension: str = "pymdownx.arithmatex"
+    math_extension_config: Dict[str, Any] = field(default_factory=dict)
 
 
 class MarkdownConverter:
@@ -246,9 +250,33 @@ class MarkdownConverter:
                 "markdown package is required. Install with 'pip install markdown'."
             ) from exc
 
+        extensions = list(self.config.extensions)
+        extension_configs = {
+            name: dict(config) for name, config in self.config.extension_configs.items()
+        }
+
+        if self.config.enable_math:
+            math_extension = self.config.math_extension
+            try:
+                importlib.import_module(math_extension)
+            except ImportError as exc:
+                raise DependencyError(
+                    (
+                        "Math rendering extension '%s' is unavailable. "
+                        "Install with 'pip install pymdown-extensions'."
+                    )
+                    % math_extension
+                ) from exc
+            if math_extension not in extensions:
+                extensions.append(math_extension)
+            if self.config.math_extension_config:
+                extension_configs.setdefault(math_extension, {}).update(
+                    self.config.math_extension_config
+                )
+
         return markdown.Markdown(
-            extensions=self.config.extensions,
-            extension_configs=self.config.extension_configs,
+            extensions=extensions,
+            extension_configs=extension_configs,
             output_format=self.config.output_format,
         )
 
@@ -399,6 +427,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Path to JSON file providing markdown extension configuration overrides.",
     )
     parser.add_argument(
+        "--enable-math",
+        action="store_true",
+        help="Enable math rendering via pymdown-extensions.",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"],
@@ -430,6 +463,7 @@ def run_cli(argv: Optional[List[str]] = None) -> int:
     if extension_configs:
         config.extension_configs.update(extension_configs)
 
+    config.enable_math = bool(args.enable_math)
     config.sanitize_html = not args.no_sanitize
     config.fail_on_unsafe_html = bool(args.fail_on_unsafe)
     config.wrap_html = not args.no_wrap
